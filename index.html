@@ -150,9 +150,10 @@ function renderKitsPage(){
     btn.addEventListener('click', async ()=>{
       const item = prompt('Which item is this about?');
       if(!item) return;
+      const unitId = prompt('Unit/Asset # (Cheqroom, leave blank if unknown):') || '';
       const note = prompt('Brief note (optional):') || '';
       const reporter = prompt('Your name:') || 'Staff';
-      await addConditionLogEntry({ kitId: String(btn.dataset.reportKit), item, note, reportedBy: reporter, type: 'damaged' });
+      await addConditionLogEntry({ kitId: String(btn.dataset.reportKit), item, unitId, note, reportedBy: reporter, type: 'damaged' });
       loadConditionLogForCard(btn.dataset.reportKit);
     });
   });
@@ -166,7 +167,7 @@ async function loadConditionLogForCard(kitId){
   if(!open.length){ areaEl.innerHTML = ''; return; }
   areaEl.innerHTML = open.map(e => `
     <div style="color:var(--danger); margin-bottom:4px;">
-      ⚠ ${e.item}${e.note ? ' — '+e.note : ''}
+      ⚠ ${e.item}${e.unitId ? ` <strong style="color:var(--amber-dim);">[Unit ${e.unitId}]</strong>` : ''}${e.note ? ' — '+e.note : ''}
       <button data-resolve="${e.id}" data-kit="${kitId}" style="margin-left:6px; font-size:11px;" type="button">Mark Resolved</button>
     </div>
   `).join('');
@@ -200,9 +201,11 @@ function renderIndexPage(){
 
 // ---------------- Checkout / Check-In page ----------------
 let newOrderKits = [];
+let newOrderUnitIds = {};
 let orderMode = 'new';
 let lookupSearchTerm = '';
 let lookupOpenOrder = null;
+let lookupShowArchived = false;
 
 function renderOrdersPage(){
   const el = document.getElementById('page-orders');
@@ -231,7 +234,10 @@ function renderNewOrderPane(){
       <div id="kitPickerList" style="max-height:200px; overflow-y:auto; border:1px solid var(--line-soft); border-radius:6px; margin-bottom:10px;"></div>
       <div id="selectedKitsArea">${newOrderKits.map(id=>{
         const k = ALL_KITS.find(x=>String(x.id)===String(id));
-        return k ? `<span class="selected-kit-chip">${k.name} <button data-remove="${id}" type="button">✕</button></span>` : '';
+        const unitVal = newOrderUnitIds[id] || '';
+        return k ? `<span class="selected-kit-chip">${k.name}
+          <input type="text" class="order-unit-input" data-unitkit="${id}" placeholder="Unit/Asset # (Cheqroom)" value="${unitVal}" style="width:150px; margin-left:8px; font-size:12px;">
+          <button data-remove="${id}" type="button">✕</button></span>` : '';
       }).join('')}</div>
       <button class="btn" id="saveOrderBtn" type="button" style="margin-top:12px;">💾 Save Checkout</button>
       <div id="saveStatusMsg" style="margin-top:8px; font-size:13px;"></div>
@@ -250,6 +256,9 @@ function renderNewOrderPane(){
   }
   document.getElementById('kitPickerSearch').addEventListener('input', e => drawPicker(e.target.value.toLowerCase()));
   drawPicker('');
+  content.querySelectorAll('[data-unitkit]').forEach(inp=>{
+    inp.addEventListener('input', e=>{ newOrderUnitIds[e.target.dataset.unitkit] = e.target.value; });
+  });
   content.querySelectorAll('[data-remove]').forEach(btn=>{
     btn.addEventListener('click', ()=>{ newOrderKits = newOrderKits.filter(id=>id!==btn.dataset.remove); renderNewOrderPane(); });
   });
@@ -264,7 +273,7 @@ function renderNewOrderPane(){
     }
     const order = {
       reservationNumber: resNum, studentName,
-      kits: newOrderKits.map(id => ({ kitId: id, name: (ALL_KITS.find(k=>String(k.id)===String(id))||{}).name || '' })),
+      kits: newOrderKits.map(id => ({ kitId: id, name: (ALL_KITS.find(k=>String(k.id)===String(id))||{}).name || '', unitId: newOrderUnitIds[id] || '' })),
       status: 'checked_out', checkoutTimestamp: new Date().toISOString(), archived: false,
     };
     try{
@@ -272,6 +281,7 @@ function renderNewOrderPane(){
       statusEl.textContent = '✅ Saved.';
       statusEl.style.color = 'var(--success)';
       newOrderKits = [];
+      newOrderUnitIds = {};
     }catch(err){
       statusEl.textContent = '⚠ Could not save — ' + err.message;
       statusEl.style.color = 'var(--danger)';
@@ -283,20 +293,26 @@ async function renderLookupPane(){
   const content = document.getElementById('orderContent');
   if(lookupOpenOrder){ renderOrderDetail(lookupOpenOrder); return; }
   content.innerHTML = `
-    <input type="text" id="lookupSearch" placeholder="Reservation # or student name…" style="width:100%; margin-bottom:12px;" value="${lookupSearchTerm}">
+    <input type="text" id="lookupSearch" placeholder="Reservation # or student name…" style="width:100%; margin-bottom:8px;" value="${lookupSearchTerm}">
+    <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-faint); margin-bottom:12px;">
+      <input type="checkbox" id="showArchivedCheck" ${lookupShowArchived ? 'checked' : ''}>
+      Include archived (completed) orders
+    </label>
     <div id="lookupResults"></div>
   `;
   document.getElementById('lookupSearch').addEventListener('input', e=>{ lookupSearchTerm = e.target.value; drawResults(); });
+  document.getElementById('showArchivedCheck').addEventListener('change', e=>{ lookupShowArchived = e.target.checked; drawResults(); });
   async function drawResults(){
     const resultsEl = document.getElementById('lookupResults');
     if(lookupSearchTerm.length < 3){ resultsEl.innerHTML = '<div class="empty-state">Type at least 3 characters to search.</div>'; return; }
-    const orders = await listOrders(lookupSearchTerm, false);
+    const orders = await listOrders(lookupSearchTerm, lookupShowArchived);
     resultsEl.innerHTML = orders.length ? orders.map(o => `
       <div class="kit-card" data-open="${o.reservationNumber}" style="cursor:pointer;">
         <strong>${o.reservationNumber}</strong> — ${o.studentName}
         <span class="status-badge">${(o.status||'').replace('_',' ')}</span>
+        ${o.archived ? '<span class="status-badge" style="background:#6E6C61; color:#fff;">ARCHIVED</span>' : ''}
       </div>
-    `).join('') : '<div class="empty-state">No matches.</div>';
+    `).join('') : `<div class="empty-state">No matches${lookupShowArchived ? '' : ' (archived orders are hidden — check the box above to include them)'}.</div>`;
     resultsEl.querySelectorAll('[data-open]').forEach(row=>{
       row.addEventListener('click', ()=>{ lookupOpenOrder = row.dataset.open; renderOrdersPage(); });
     });
@@ -313,11 +329,24 @@ async function renderOrderDetail(resNum){
     <div class="card" style="margin-top:12px;">
       <strong>${order.reservationNumber}</strong> — ${order.studentName}
       <span class="status-badge">${(order.status||'').replace('_',' ')}</span>
-      <div style="margin-top:10px;">Kits: ${(order.kits||[]).map(k=>k.name).join(', ')}</div>
+      ${order.archived ? '<span class="status-badge" style="background:#6E6C61; color:#fff;">ARCHIVED</span>' : ''}
+      <div style="margin-top:10px;">Kits: ${(order.kits||[]).map(k=>k.name + (k.unitId ? ` [Unit ${k.unitId}]` : '')).join(', ')}</div>
       ${order.status === 'checked_out' ? `<button class="btn" id="checkInBtn" type="button" style="margin-top:12px;">Complete Check-In</button>` : ''}
+      ${order.status === 'checked_in' ? `
+        <div style="margin-top:12px;">
+          <button class="btn secondary" id="archiveBtn" type="button">${order.archived ? '↩ Un-archive this order' : '📦 Archive this order'}</button>
+        </div>
+      ` : ''}
     </div>
   `;
   document.getElementById('backBtn').addEventListener('click', ()=>{ lookupOpenOrder = null; renderOrdersPage(); });
+  const archiveBtn = document.getElementById('archiveBtn');
+  if(archiveBtn){
+    archiveBtn.addEventListener('click', async ()=>{
+      await setOrderArchived(resNum, !order.archived);
+      renderOrderDetail(resNum);
+    });
+  }
   const checkInBtn = document.getElementById('checkInBtn');
   if(checkInBtn){
     checkInBtn.addEventListener('click', async ()=>{
