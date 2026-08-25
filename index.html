@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Regent Equipment Office</title>
+<style>
+  :root{
+    --bg:#F7F6F2; --panel:#FFFFFF; --line:#DEDBD2; --line-soft:#EAE7E0;
+    --text:#28271F; --text-muted:#6E6C61; --text-faint:#9A978A;
+    --amber:#C6862A; --amber-dim:#8A662C; --danger:#B23B3B; --success:#2E8B5C;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,Arial,sans-serif; font-size:15px;}
+  .header{border-bottom:1px solid var(--line); background:var(--panel); padding:20px 28px;}
+  .header h1{font-size:26px; margin:0; font-weight:800;}
+  .header h1 span{color:var(--amber);}
+  .tab-nav{max-width:1180px; margin:0 auto; display:flex; gap:4px; padding:0 28px; border-bottom:1px solid var(--line); background:var(--panel);}
+  .tab-btn{background:none; border:none; border-bottom:2px solid transparent; padding:14px 4px; margin-right:24px; font-size:14px; font-weight:600; color:var(--text-faint); cursor:pointer;}
+  .tab-btn.active{color:var(--amber); border-bottom-color:var(--amber);}
+  .page{max-width:1180px; margin:0 auto; padding:24px 28px 60px;}
+  .callout{background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--amber); border-radius:6px; padding:14px 16px; margin-bottom:20px; font-size:13.5px; color:var(--text-muted);}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:16px 18px; margin-bottom:12px;}
+  input, select, textarea, button{font-family:inherit;}
+  input, select, textarea{background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:9px 12px; font-size:14px; color:var(--text);}
+  .btn{background:var(--amber); color:#fff; border:none; border-radius:6px; padding:9px 16px; font-size:14px; font-weight:600; cursor:pointer;}
+  .btn:hover{background:var(--amber-dim);}
+  .btn.secondary{background:transparent; color:var(--text); border:1px solid var(--line);}
+  .grade-chip{display:inline-block; padding:6px 14px; border-radius:20px; border:1px solid var(--line); margin-right:6px; cursor:pointer; font-size:13px;}
+  .grade-chip.active{background:var(--amber); color:#fff; border-color:var(--amber);}
+  .kit-card{border:1px solid var(--line); border-radius:6px; padding:12px 14px; margin-bottom:8px; background:var(--panel);}
+  .kit-name{font-weight:700;}
+  .badge{font-size:10.5px; text-transform:uppercase; padding:2px 8px; border-radius:20px; margin-left:8px;}
+  .badge.ok{background:rgba(46,139,92,0.12); color:var(--success);}
+  .badge.blocked{background:rgba(178,59,59,0.1); color:var(--danger);}
+  .badge.approval{background:rgba(198,134,42,0.14); color:var(--amber-dim);}
+  .empty-state{color:var(--text-faint); padding:20px; text-align:center;}
+  .order-field-row{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;}
+  .selected-kit-chip{display:inline-flex; align-items:center; gap:6px; background:var(--bg); border:1px solid var(--line); border-radius:20px; padding:5px 12px; margin:4px 4px 4px 0; font-size:13px;}
+  .status-badge{font-size:11px; text-transform:uppercase; padding:3px 9px; border-radius:20px; background:var(--line-soft); margin-left:8px;}
+  .sync-indicator{font-size:11px; color:var(--success); display:inline-flex; align-items:center; gap:4px;}
+  .checklist-row{display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid var(--line-soft);}
+  .card ol, .card ul{padding-left:20px;}
+  .card li{margin-bottom:6px;}
+  .card .callout{margin-top:10px;}
+  .card code{background:var(--bg); padding:2px 6px; border-radius:4px; font-size:12.5px;}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>REGENT <span>EQUIPMENT OFFICE</span></h1>
+</div>
+
+<div class="tab-nav">
+  <button class="tab-btn active" data-page="orders" type="button">Checkout / Check-In</button>
+  <button class="tab-btn" data-page="kits" type="button">Kit ID &amp; Testing</button>
+  <button class="tab-btn" data-page="index" type="button">Equipment Index</button>
+  <button class="tab-btn" data-page="updatelog" type="button">Update Log</button>
+  <button class="tab-btn" data-page="sops" type="button">SOPs</button>
+  <button class="tab-btn" data-page="policy" type="button">Policies &amp; Procedures</button>
+</div>
+
+<div id="page-orders" class="page"></div>
+<div id="page-kits" class="page" style="display:none;"></div>
+<div id="page-index" class="page" style="display:none;"></div>
+<div id="page-updatelog" class="page" style="display:none;"></div>
+<div id="page-sops" class="page" style="display:none;"></div>
+<div id="page-policy" class="page" style="display:none;"></div>
+
+<script type="module">
+import {
+  getAllKits, getKit, getOrder, saveOrder, listOrders, setOrderArchived,
+  addConditionLogEntry, getConditionLogForKit, resolveConditionLogEntry,
+  addUpdateLogItem, getUpdateLogItems, toggleUpdateLogItem, deleteUpdateLogItem,
+  setLastReviewedDate, getLastReviewedDate, watchCollection,
+} from "./firebase-data.js";
+import { SOP_SECTIONS } from "./sops_data.js";
+import { POLICY_SECTIONS, POLICY_TOPICS } from "./policies_data.js";
+
+const STUDENT_TIER_LABELS = {freshman:"Freshman", sophomore:"Sophomore", junior:"Junior", senior:"Senior+"};
+const STUDENT_TIER_RANK = {freshman:1, sophomore:2, junior:3, senior:4};
+
+let ALL_KITS = [];
+let studentGrade = null;
+let kitSearchTerm = '';
+
+// ---------------- Tab switching ----------------
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    ['orders','kits','index','updatelog','sops','policy'].forEach(p=>{
+      document.getElementById('page-'+p).style.display = (p===btn.dataset.page) ? '' : 'none';
+    });
+    if(btn.dataset.page === 'updatelog') renderUpdateLog();
+    if(btn.dataset.page === 'sops') renderSOPs();
+    if(btn.dataset.page === 'policy') renderPolicies();
+  });
+});
+
+// ---------------- Eligibility (ported exactly from the original tool) ----------------
+function eligibility(kit, gradeOverride){
+  const grade = gradeOverride !== undefined ? gradeOverride : studentGrade;
+  if(kit.gradeApproval) return {status:'approval', label:'Requires special clearance'};
+  if(kit.gradeLinked) return {status:'linked', label:'Depends on paired camera'};
+  if(!kit.gradeTier) return {status:'none', label:null};
+  if(!grade) return {status:'none', label:`Requires ${STUDENT_TIER_LABELS[kit.gradeTier]}+`};
+  const need = STUDENT_TIER_RANK[kit.gradeTier];
+  const have = STUDENT_TIER_RANK[grade];
+  if(have >= need) return {status:'ok', label:`Cleared — ${STUDENT_TIER_LABELS[kit.gradeTier]}+ kit`};
+  return {status:'blocked', label:`Not allowed — requires ${STUDENT_TIER_LABELS[kit.gradeTier]}+`};
+}
+
+// ---------------- Kit ID & Testing page ----------------
+function renderKitsPage(){
+  const el = document.getElementById('page-kits');
+  const filtered = ALL_KITS.filter(k => !kitSearchTerm || k.name.toLowerCase().includes(kitSearchTerm));
+  el.innerHTML = `
+    <div class="callout">Kit reference, testing steps, and condition log — live-synced across every device automatically.</div>
+    <input type="text" id="kitSearch" placeholder="Search kits…" style="width:100%; margin-bottom:12px;" value="${kitSearchTerm}">
+    <div id="gradeChips" style="margin-bottom:14px;">
+      ${Object.entries(STUDENT_TIER_LABELS).map(([tier,label])=>
+        `<span class="grade-chip ${studentGrade===tier?'active':''}" data-tier="${tier}">${label}</span>`).join('')}
+      <span class="grade-chip" data-tier="">Clear</span>
+    </div>
+    <div id="kitsList"></div>
+  `;
+  document.getElementById('kitSearch').addEventListener('input', e=>{ kitSearchTerm = e.target.value.toLowerCase(); renderKitsPage(); });
+  el.querySelectorAll('.grade-chip').forEach(chip=>{
+    chip.addEventListener('click', ()=>{ studentGrade = chip.dataset.tier || null; renderKitsPage(); });
+  });
+  const listEl = document.getElementById('kitsList');
+  if(!filtered.length){ listEl.innerHTML = '<div class="empty-state">No kits match.</div>'; return; }
+  listEl.innerHTML = filtered.map(k=>{
+    const elig = eligibility(k);
+    return `
+      <div class="kit-card" data-kit-id="${k.id}">
+        <span class="kit-name">${k.name}</span>
+        ${k.kittype==='retired' ? '<span class="badge blocked">RETIRED</span>' : ''}
+        ${elig.label ? `<span class="badge ${elig.status}">${elig.label}</span>` : ''}
+        <div style="font-size:12.5px; color:var(--text-muted); margin-top:6px;">${k.category || ''}</div>
+        <div class="kit-condition-area" id="cond-${k.id}" style="margin-top:8px; font-size:12.5px;"></div>
+        <button class="btn secondary" data-report-kit="${k.id}" type="button" style="margin-top:8px; font-size:12px; padding:5px 10px;">+ Report an issue</button>
+      </div>
+    `;
+  }).join('');
+  filtered.forEach(k => loadConditionLogForCard(k.id));
+  listEl.querySelectorAll('[data-report-kit]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const item = prompt('Which item is this about?');
+      if(!item) return;
+      const unitId = prompt('Unit/Asset # (Cheqroom, leave blank if unknown):') || '';
+      const note = prompt('Brief note (optional):') || '';
+      const reporter = prompt('Your name:') || 'Staff';
+      await addConditionLogEntry({ kitId: String(btn.dataset.reportKit), item, unitId, note, reportedBy: reporter, type: 'damaged' });
+      loadConditionLogForCard(btn.dataset.reportKit);
+    });
+  });
+}
+
+async function loadConditionLogForCard(kitId){
+  const entries = await getConditionLogForKit(kitId);
+  const open = entries.filter(e => !e.resolved);
+  const areaEl = document.getElementById('cond-'+kitId);
+  if(!areaEl) return;
+  if(!open.length){ areaEl.innerHTML = ''; return; }
+  areaEl.innerHTML = open.map(e => `
+    <div style="color:var(--danger); margin-bottom:4px;">
+      ⚠ ${e.item}${e.unitId ? ` <strong style="color:var(--amber-dim);">[Unit ${e.unitId}]</strong>` : ''}${e.note ? ' — '+e.note : ''}
+      <button data-resolve="${e.id}" data-kit="${kitId}" style="margin-left:6px; font-size:11px;" type="button">Mark Resolved</button>
+    </div>
+  `).join('');
+  areaEl.querySelectorAll('[data-resolve]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      await resolveConditionLogEntry(btn.dataset.resolve);
+      loadConditionLogForCard(btn.dataset.kit);
+    });
+  });
+}
+
+// ---------------- Equipment Index page ----------------
+function renderIndexPage(){
+  const el = document.getElementById('page-index');
+  el.innerHTML = `
+    <div class="callout">Reference only — shows what pairs with what. Not a request form.</div>
+    <input type="text" id="indexSearch" placeholder="Search the Equipment Index…" style="width:100%; margin-bottom:12px;">
+    <div id="indexList"></div>
+  `;
+  const listEl = document.getElementById('indexList');
+  function draw(term){
+    const filtered = ALL_KITS.filter(k => !term || k.name.toLowerCase().includes(term));
+    listEl.innerHTML = filtered.map(k => `
+      <div class="kit-card"><span class="kit-name">${k.name}</span>
+      <div style="font-size:12.5px; color:var(--text-muted); margin-top:4px;">${(k.contents||[]).slice(0,4).join(', ')}${(k.contents||[]).length>4?'…':''}</div></div>
+    `).join('') || '<div class="empty-state">No matches.</div>';
+  }
+  document.getElementById('indexSearch').addEventListener('input', e => draw(e.target.value.toLowerCase()));
+  draw('');
+}
+
+// ---------------- Checkout / Check-In page ----------------
+let newOrderKits = [];
+let newOrderUnitIds = {};
+let newOrderStudentGrade = '';
+let newOrderOverride = {ack: false, reason: ''};
+let newOrderResNum = '';
+let newOrderStudentName = '';
+let newOrderStudentSig = '';
+let newOrderStaffSig = '';
+let newOrderChecklist = {};
+let orderMode = 'new';
+let lookupSearchTerm = '';
+let lookupOpenOrder = null;
+let lookupShowArchived = false;
+
+function renderOrdersPage(){
+  const el = document.getElementById('page-orders');
+  el.innerHTML = `
+    <div style="margin-bottom:14px;">
+      <span class="grade-chip ${orderMode==='new'?'active':''}" data-mode="new">New Checkout</span>
+      <span class="grade-chip ${orderMode==='lookup'?'active':''}" data-mode="lookup">Check-In / Lookup</span>
+    </div>
+    <div id="orderContent"></div>
+  `;
+  el.querySelectorAll('[data-mode]').forEach(chip=>{
+    chip.addEventListener('click', ()=>{ orderMode = chip.dataset.mode; renderOrdersPage(); });
+  });
+  if(orderMode === 'new') renderNewOrderPane(); else renderLookupPane();
+}
+
+function renderNewOrderPane(){
+  const content = document.getElementById('orderContent');
+  const mismatches = newOrderStudentGrade
+    ? newOrderKits.map(id => ALL_KITS.find(k=>String(k.id)===String(id))).filter(k=>k).map(k => ({kit:k, elig: eligibility(k, newOrderStudentGrade)})).filter(m => m.elig.status === 'blocked')
+    : [];
+  content.innerHTML = `
+    <div class="card">
+      <div class="order-field-row">
+        <select id="studentGradeSelect" style="width:200px;">
+          <option value="">— Student Grade Level —</option>
+          <option value="freshman" ${newOrderStudentGrade==='freshman'?'selected':''}>Freshman</option>
+          <option value="sophomore" ${newOrderStudentGrade==='sophomore'?'selected':''}>Sophomore</option>
+          <option value="junior" ${newOrderStudentGrade==='junior'?'selected':''}>Junior</option>
+          <option value="senior" ${newOrderStudentGrade==='senior'?'selected':''}>Senior+</option>
+        </select>
+        <input type="text" id="resNumInput" placeholder="Reservation #" value="${newOrderResNum}">
+        <input type="text" id="studentNameInput" placeholder="Student name" value="${newOrderStudentName}">
+      </div>
+      ${mismatches.length ? `
+        <div class="callout" style="border-left-color:var(--danger);">
+          <strong style="color:var(--danger);">⚠ Grade eligibility conflict</strong> — declared <strong>${newOrderStudentGrade}</strong>, but this order includes:
+          <ul style="margin:6px 0 10px 18px;">${mismatches.map(m=>`<li><strong>${m.kit.name}</strong> — ${m.elig.label}</li>`).join('')}</ul>
+          <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; margin-bottom:8px;">
+            <input type="checkbox" id="gradeOverrideCheck" ${newOrderOverride.ack?'checked':''} style="margin-top:3px;">
+            <span>Staff is overriding this on purpose (e.g. professor-approved exception) — required before saving.</span>
+          </label>
+          <input type="text" id="gradeOverrideReason" placeholder="Reason for override" value="${newOrderOverride.reason||''}" style="width:100%; box-sizing:border-box;">
+        </div>
+      ` : ''}
+      <input type="text" id="kitPickerSearch" placeholder="Search kits to add…" style="width:100%; margin-bottom:10px;">
+      <div id="kitPickerList" style="max-height:200px; overflow-y:auto; border:1px solid var(--line-soft); border-radius:6px; margin-bottom:10px;"></div>
+      <div id="selectedKitsArea">${newOrderKits.map(id=>{
+        const k = ALL_KITS.find(x=>String(x.id)===String(id));
+        const unitVal = newOrderUnitIds[id] || '';
+        return k ? `<span class="selected-kit-chip">${k.name}
+          <input type="text" class="order-unit-input" data-unitkit="${id}" placeholder="Unit/Asset # (Cheqroom)" value="${unitVal}" style="width:150px; margin-left:8px; font-size:12px;">
+          <button data-remove="${id}" type="button">✕</button></span>` : '';
+      }).join('')}</div>
+      <button class="btn secondary" id="buildChecklistBtn" type="button" style="margin-top:8px;" ${!newOrderKits.length ? 'disabled' : ''}>Build Combined Checklist ↓</button>
+    </div>
+    <div id="checklistArea"></div>
+  `;
+  document.getElementById('studentGradeSelect').addEventListener('change', e=>{ newOrderStudentGrade = e.target.value; renderNewOrderPane(); });
+  document.getElementById('resNumInput').addEventListener('input', e=>{ newOrderResNum = e.target.value; });
+  document.getElementById('studentNameInput').addEventListener('input', e=>{ newOrderStudentName = e.target.value; });
+  const overrideCheckEl = document.getElementById('gradeOverrideCheck');
+  if(overrideCheckEl) overrideCheckEl.addEventListener('change', e=>{ newOrderOverride.ack = e.target.checked; });
+  const overrideReasonEl = document.getElementById('gradeOverrideReason');
+  if(overrideReasonEl) overrideReasonEl.addEventListener('input', e=>{ newOrderOverride.reason = e.target.value; });
+  const pickerList = document.getElementById('kitPickerList');
+  function drawPicker(term){
+    const filtered = ALL_KITS.filter(k => !term || k.name.toLowerCase().includes(term)).slice(0, 30);
+    pickerList.innerHTML = filtered.map(k => `<div data-add="${k.id}" style="padding:8px 12px; cursor:pointer; border-bottom:1px solid var(--line-soft);">${k.name}</div>`).join('');
+    pickerList.querySelectorAll('[data-add]').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        if(!newOrderKits.includes(row.dataset.add)) newOrderKits.push(row.dataset.add);
+        renderNewOrderPane();
+      });
+    });
+  }
+  document.getElementById('kitPickerSearch').addEventListener('input', e => drawPicker(e.target.value.toLowerCase()));
+  drawPicker('');
+  content.querySelectorAll('[data-unitkit]').forEach(inp=>{
+    inp.addEventListener('input', e=>{ newOrderUnitIds[e.target.dataset.unitkit] = e.target.value; });
+  });
+  content.querySelectorAll('[data-remove]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ newOrderKits = newOrderKits.filter(id=>id!==btn.dataset.remove); renderNewOrderPane(); });
+  });
+  document.getElementById('buildChecklistBtn').addEventListener('click', ()=>{
+    newOrderChecklist = {};
+    newOrderKits.forEach(id=>{
+      const k = ALL_KITS.find(x=>String(x.id)===String(id));
+      newOrderChecklist[id] = (k.contents || []).map(()=>({checked:true, note:''}));
+    });
+    renderChecklistArea();
+  });
+}
+
+function renderChecklistArea(){
+  const area = document.getElementById('checklistArea');
+  if(!newOrderKits.length){ area.innerHTML = ''; return; }
+  let html = `<div class="card" style="margin-top:12px;"><h4 style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin:0 0 14px;">Combined Checkout Checklist</h4>`;
+  newOrderKits.forEach(id=>{
+    const k = ALL_KITS.find(x=>String(x.id)===String(id));
+    html += `<div style="margin-bottom:14px;"><div style="font-weight:700; margin-bottom:6px;">${k.name}</div>`;
+    (k.contents || []).forEach((item,i)=>{
+      const state = newOrderChecklist[id][i];
+      html += `<div class="checklist-row" data-kit="${id}" data-idx="${i}">
+        <input type="checkbox" ${state.checked?'checked':''} class="item-check">
+        <span>${item}</span>
+        ${!state.checked ? `<input type="text" class="item-note" placeholder="note (e.g. missing)" value="${state.note}" style="margin-left:auto; font-size:12px;">` : ''}
+      </div>`;
+    });
+    html += `</div>`;
+  });
+  html += `
+    <div class="order-field-row" style="margin-top:14px;">
+      <div style="flex:1;"><label style="font-size:12px; color:var(--text-faint);">Student Signature (typed name)</label><input type="text" id="studentSigInput" placeholder="Type full name to acknowledge" style="width:100%;" value="${newOrderStudentSig}"></div>
+      <div style="flex:1;"><label style="font-size:12px; color:var(--text-faint);">Staff Signature (typed name)</label><input type="text" id="staffSigInput" placeholder="Type full name" style="width:100%;" value="${newOrderStaffSig}"></div>
+    </div>
+    <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
+      <button class="btn" id="saveOrderBtn" type="button">💾 Save Checkout Record</button>
+      <button class="btn secondary" id="saveDraftBtn" type="button">📋 Save Draft</button>
+      <button class="btn secondary" id="printOrderBtn" type="button">🖨️ Print Summary</button>
+    </div>
+    <div style="font-size:12.5px; color:var(--text-faint); margin-top:8px;">Draft: no signature needed yet — save it, give the student the reservation number, they can look it up later to finish checking items off and sign themselves.</div>
+    <div id="saveStatusMsg" style="margin-top:8px; font-size:13px;"></div>
+  </div>`;
+  area.innerHTML = html;
+
+  area.querySelectorAll('.item-check').forEach(cb=>{
+    cb.addEventListener('change', e=>{
+      const row = e.target.closest('[data-kit]');
+      newOrderChecklist[row.dataset.kit][parseInt(row.dataset.idx)].checked = e.target.checked;
+      renderChecklistArea();
+    });
+  });
+  area.querySelectorAll('.item-note').forEach(inp=>{
+    inp.addEventListener('input', e=>{
+      const row = e.target.closest('[data-kit]');
+      newOrderChecklist[row.dataset.kit][parseInt(row.dataset.idx)].note = e.target.value;
+    });
+  });
+  document.getElementById('studentSigInput').addEventListener('input', e=>{ newOrderStudentSig = e.target.value; });
+  document.getElementById('staffSigInput').addEventListener('input', e=>{ newOrderStaffSig = e.target.value; });
+  document.getElementById('saveOrderBtn').addEventListener('click', saveNewOrder);
+  document.getElementById('saveDraftBtn').addEventListener('click', saveDraftOrder);
+  document.getElementById('printOrderBtn').addEventListener('click', ()=>printOrderSummary(buildOrderObjectDraft()));
+}
+
+function buildOrderObjectDraft(){
+  const mismatches = getGradeMismatches();
+  const kitsData = newOrderKits.map(id=>{
+    const k = ALL_KITS.find(x=>String(x.id)===String(id));
+    return {
+      kitId:id, name:k.name, unitId: newOrderUnitIds[id] || '',
+      items: (k.contents || []).map((item,i)=>({item, ...(newOrderChecklist[id] ? newOrderChecklist[id][i] : {checked:true,note:''})}))
+    };
+  });
+  return {
+    reservationNumber: newOrderResNum.trim() || '(no reservation #)',
+    studentName: newOrderStudentName.trim() || '(no name entered)',
+    kits: kitsData,
+    studentGradeLevel: newOrderStudentGrade,
+    gradeOverride: mismatches.length ? {...newOrderOverride} : null,
+    checkoutSignatureStudent: newOrderStudentSig.trim(),
+    checkoutSignatureStaff: newOrderStaffSig.trim(),
+    checkoutTimestamp: new Date().toISOString(), status: 'checked_out', archived: false,
+  };
+}
+
+function getGradeMismatches(){
+  if(!newOrderStudentGrade) return [];
+  return newOrderKits.map(id => ALL_KITS.find(k=>String(k.id)===String(id))).filter(k=>k)
+    .map(k => eligibility(k, newOrderStudentGrade)).filter(e => e.status === 'blocked');
+}
+
+async function saveNewOrder(){
+  const statusEl = document.getElementById('saveStatusMsg');
+  const mismatches = getGradeMismatches();
+  if(mismatches.length && !newOrderOverride.ack){
+    statusEl.textContent = '⚠ This order has a grade-eligibility conflict that hasn\'t been acknowledged. Check the override box above, or remove the flagged kit(s), before saving.';
+    statusEl.style.color = 'var(--danger)'; return;
+  }
+  if(mismatches.length && newOrderOverride.ack && !newOrderOverride.reason.trim()){
+    statusEl.textContent = '⚠ An override reason is required when overriding a grade-eligibility conflict.';
+    statusEl.style.color = 'var(--danger)'; return;
+  }
+  const order = buildOrderObjectDraft();
+  if(order.reservationNumber === '(no reservation #)'){
+    statusEl.textContent = '⚠ Please enter a reservation number before saving.'; statusEl.style.color = 'var(--danger)'; return;
+  }
+  if(!order.checkoutSignatureStudent){
+    statusEl.textContent = '⚠ Student signature (typed name) is required before saving.'; statusEl.style.color = 'var(--danger)'; return;
+  }
+  try{
+    await saveOrder(order);
+    statusEl.textContent = `✅ Saved. Staff can look this up at check-in using reservation #${order.reservationNumber}.`;
+    statusEl.style.color = 'var(--success)';
+  }catch(err){
+    statusEl.textContent = '⚠ Could not save — ' + err.message + '. Try printing as a backup.';
+    statusEl.style.color = 'var(--danger)';
+  }
+}
+
+async function saveDraftOrder(){
+  const statusEl = document.getElementById('saveStatusMsg');
+  const mismatches = getGradeMismatches();
+  if(mismatches.length && !newOrderOverride.ack){
+    statusEl.textContent = '⚠ This order has a grade-eligibility conflict that hasn\'t been acknowledged — even as a draft, since the student won\'t see this warning when finishing it themselves.';
+    statusEl.style.color = 'var(--danger)'; return;
+  }
+  if(mismatches.length && newOrderOverride.ack && !newOrderOverride.reason.trim()){
+    statusEl.textContent = '⚠ An override reason is required when overriding a grade-eligibility conflict.';
+    statusEl.style.color = 'var(--danger)'; return;
+  }
+  const order = buildOrderObjectDraft();
+  if(order.reservationNumber === '(no reservation #)'){
+    statusEl.textContent = '⚠ Please enter a reservation number before saving.'; statusEl.style.color = 'var(--danger)'; return;
+  }
+  order.status = 'draft';
+  try{
+    await saveOrder(order);
+    statusEl.textContent = `✅ Draft saved. Give the student reservation #${order.reservationNumber} — they can look it up later to finish checking items off and sign.`;
+    statusEl.style.color = 'var(--success)';
+  }catch(err){
+    statusEl.textContent = '⚠ Could not save — ' + err.message;
+    statusEl.style.color = 'var(--danger)';
+  }
+}
+
+function printOrderSummary(order){
+  const win = window.open('', '_blank');
+  const kitsHtml = order.kits.map(k=>`
+    <h3 style="margin:18px 0 6px; font-size:15px;">${k.name}${k.unitId ? ` (Unit ${k.unitId})` : ''}</h3>
+    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+      ${k.items.map(it=>`<tr style="border-bottom:1px solid #ddd;">
+        <td style="padding:4px 0; width:24px;">${it.checked?'☑':'☐'}</td>
+        <td style="padding:4px 0;">${it.item}</td>
+        <td style="padding:4px 0; color:#a00;">${it.note||''}</td>
+      </tr>`).join('')}
+    </table>`).join('');
+  win.document.write(`
+    <html><head><title>Order ${order.reservationNumber}</title>
+    <style>body{font-family:Arial,sans-serif; color:#111; padding:30px; max-width:800px; margin:0 auto;}
+    h1{font-size:20px; border-bottom:2px solid #111; padding-bottom:8px;}
+    .meta{font-size:13px; color:#444; margin-bottom:14px;}
+    .sigs{margin-top:30px; display:flex; gap:40px;}
+    .sig-line{border-top:1px solid #111; margin-top:40px; padding-top:4px; width:250px; font-size:12px;}
+    </style></head><body>
+    <h1>Regent Equipment Office — Checkout Summary</h1>
+    <div class="meta">Reservation #: <strong>${order.reservationNumber}</strong> &nbsp;|&nbsp; Student: <strong>${order.studentName}</strong> &nbsp;|&nbsp; ${new Date(order.checkoutTimestamp).toLocaleString()}</div>
+    ${kitsHtml}
+    <div class="sigs">
+      <div><div>${order.checkoutSignatureStudent}</div><div class="sig-line">Student Signature</div></div>
+      <div><div>${order.checkoutSignatureStaff}</div><div class="sig-line">Checked Out By (Staff)</div></div>
+    </div>
+    </body></html>`);
+  win.document.close();
+  win.print();
+}
+
+async function renderLookupPane(){
+  const content = document.getElementById('orderContent');
+  if(lookupOpenOrder){ renderOrderDetail(lookupOpenOrder); return; }
+  content.innerHTML = `
+    <input type="text" id="lookupSearch" placeholder="Reservation # or student name…" style="width:100%; margin-bottom:8px;" value="${lookupSearchTerm}">
+    <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:var(--text-faint); margin-bottom:12px;">
+      <input type="checkbox" id="showArchivedCheck" ${lookupShowArchived ? 'checked' : ''}>
+      Include archived (completed) orders
+    </label>
+    <div id="lookupResults"></div>
+  `;
+  document.getElementById('lookupSearch').addEventListener('input', e=>{ lookupSearchTerm = e.target.value; drawResults(); });
+  document.getElementById('showArchivedCheck').addEventListener('change', e=>{ lookupShowArchived = e.target.checked; drawResults(); });
+  async function drawResults(){
+    const resultsEl = document.getElementById('lookupResults');
+    if(lookupSearchTerm.length < 3){ resultsEl.innerHTML = '<div class="empty-state">Type at least 3 characters to search.</div>'; return; }
+    const orders = await listOrders(lookupSearchTerm, lookupShowArchived);
+    resultsEl.innerHTML = orders.length ? orders.map(o => `
+      <div class="kit-card" data-open="${o.reservationNumber}" style="cursor:pointer;">
+        <strong>${o.reservationNumber}</strong> — ${o.studentName}
+        <span class="status-badge">${(o.status||'').replace('_',' ')}</span>
+        ${o.archived ? '<span class="status-badge" style="background:#6E6C61; color:#fff;">ARCHIVED</span>' : ''}
+      </div>
+    `).join('') : `<div class="empty-state">No matches${lookupShowArchived ? '' : ' (archived orders are hidden — check the box above to include them)'}.</div>`;
+    resultsEl.querySelectorAll('[data-open]').forEach(row=>{
+      row.addEventListener('click', ()=>{ lookupOpenOrder = row.dataset.open; renderOrdersPage(); });
+    });
+  }
+  drawResults();
+}
+
+async function renderOrderDetail(resNum){
+  const content = document.getElementById('orderContent');
+  const order = await getOrder(resNum);
+  if(!order){ content.innerHTML = '<div class="empty-state">Order not found.</div>'; return; }
+  content.innerHTML = `
+    <button class="btn secondary" id="backBtn" type="button">← Back</button>
+    <div class="card" style="margin-top:12px;">
+      <strong>${order.reservationNumber}</strong> — ${order.studentName}
+      <span class="status-badge">${(order.status||'').replace('_',' ')}</span>
+      ${order.archived ? '<span class="status-badge" style="background:#6E6C61; color:#fff;">ARCHIVED</span>' : ''}
+      <div style="margin-top:10px;">Kits: ${(order.kits||[]).map(k=>k.name + (k.unitId ? ` [Unit ${k.unitId}]` : '')).join(', ')}</div>
+      ${order.status === 'checked_out' ? `<button class="btn" id="checkInBtn" type="button" style="margin-top:12px;">Complete Check-In</button>` : ''}
+      ${order.status === 'checked_in' ? `
+        <div style="margin-top:12px;">
+          <button class="btn secondary" id="archiveBtn" type="button">${order.archived ? '↩ Un-archive this order' : '📦 Archive this order'}</button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+  document.getElementById('backBtn').addEventListener('click', ()=>{ lookupOpenOrder = null; renderOrdersPage(); });
+  const archiveBtn = document.getElementById('archiveBtn');
+  if(archiveBtn){
+    archiveBtn.addEventListener('click', async ()=>{
+      await setOrderArchived(resNum, !order.archived);
+      renderOrderDetail(resNum);
+    });
+  }
+  const checkInBtn = document.getElementById('checkInBtn');
+  if(checkInBtn){
+    checkInBtn.addEventListener('click', async ()=>{
+      order.status = 'checked_in';
+      order.checkinTimestamp = new Date().toISOString();
+      await saveOrder(order);
+      renderOrderDetail(resNum);
+    });
+  }
+}
+
+// ---------------- Update Log page ----------------
+async function renderUpdateLog(){
+  const el = document.getElementById('page-updatelog');
+  const items = await getUpdateLogItems();
+  const lastReviewed = await getLastReviewedDate();
+  const open = items.filter(i => !i.done);
+  const done = items.filter(i => i.done);
+  el.innerHTML = `
+    <div class="callout">Running list of tool changes to make — live-synced across every device.</div>
+    <div class="order-field-row">
+      <input type="text" id="newUpdateInput" placeholder="Describe an update to make…" style="flex:1;">
+      <button class="btn" id="addUpdateBtn" type="button">+ Add</button>
+    </div>
+    <div class="card" style="border-left:3px solid var(--amber);">
+      🗓 ${lastReviewed ? 'Last reviewed: ' + new Date(lastReviewed.seconds*1000).toLocaleDateString() : 'Not yet marked reviewed.'}
+      <div style="margin-top:8px;"><button class="btn secondary" id="markReviewedBtn" type="button">✓ Mark Reviewed Today</button></div>
+    </div>
+    <h3>Open (${open.length})</h3>
+    ${open.map(i => `<div class="checklist-row"><input type="checkbox" data-toggle="${i.id}"><span>${i.text}</span><button data-delete="${i.id}" style="margin-left:auto;" type="button">✕</button></div>`).join('') || '<div class="empty-state">Nothing open.</div>'}
+    <h3 style="color:var(--text-muted);">Completed</h3>
+    ${done.map(i => `<div class="checklist-row"><input type="checkbox" checked data-toggle="${i.id}"><span style="text-decoration:line-through; color:var(--text-faint);">${i.text}</span><button data-delete="${i.id}" style="margin-left:auto;" type="button">✕</button></div>`).join('') || '<div class="empty-state">Nothing completed yet.</div>'}
+  `;
+  document.getElementById('addUpdateBtn').addEventListener('click', async ()=>{
+    const input = document.getElementById('newUpdateInput');
+    if(!input.value.trim()) return;
+    await addUpdateLogItem(input.value.trim());
+    renderUpdateLog();
+  });
+  document.getElementById('markReviewedBtn').addEventListener('click', async ()=>{
+    await setLastReviewedDate();
+    renderUpdateLog();
+  });
+  el.querySelectorAll('[data-toggle]').forEach(cb=>{
+    cb.addEventListener('change', async e=>{ await toggleUpdateLogItem(e.target.dataset.toggle, e.target.checked); renderUpdateLog(); });
+  });
+  el.querySelectorAll('[data-delete]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{ await deleteUpdateLogItem(btn.dataset.delete); renderUpdateLog(); });
+  });
+}
+
+// ---------------- Init ----------------
+// ---------------- SOPs page ----------------
+let sopSearchTerm = '';
+function renderSOPs(){
+  const el = document.getElementById('page-sops');
+  const filtered = SOP_SECTIONS.filter(s => !sopSearchTerm || s.title.toLowerCase().includes(sopSearchTerm) || s.body.toLowerCase().includes(sopSearchTerm));
+  el.innerHTML = `
+    <div class="callout">Reference for how the Hub itself works — device setup, updates, and the underlying order process. For day-to-day student/staff policy, see Policies &amp; Procedures instead.</div>
+    <input type="text" id="sopSearch" placeholder="Search SOPs…" style="width:100%; margin-bottom:14px;" value="${sopSearchTerm}">
+    <div id="sopList"></div>
+  `;
+  document.getElementById('sopSearch').addEventListener('input', e=>{ sopSearchTerm = e.target.value.toLowerCase(); renderSOPs(); });
+  const listEl = document.getElementById('sopList');
+  listEl.innerHTML = filtered.length ? filtered.map(s => `
+    <div class="card">
+      <strong>${s.title}</strong>
+      <span style="font-size:11px; color:var(--text-faint); margin-left:8px;">Updated ${s.updated}</span>
+      <div style="margin-top:8px; font-size:14px; line-height:1.5;">${s.body}</div>
+    </div>
+  `).join('') : '<div class="empty-state">No SOPs match that search.</div>';
+}
+
+// ---------------- Policies & Procedures page ----------------
+let policySearchTerm = '';
+let activePolicyTopics = new Set();
+let showStaffContent = false;
+let openPolicyId = null;
+
+function policyMatches(section){
+  if(!showStaffContent && section.staff) return false;
+  if(activePolicyTopics.size && !activePolicyTopics.has(section.topic)) return false;
+  if(policySearchTerm){
+    const hay = (section.title + ' ' + section.body).toLowerCase();
+    if(!hay.includes(policySearchTerm)) return false;
+  }
+  return true;
+}
+
+function renderPolicies(){
+  const el = document.getElementById('page-policy');
+  el.innerHTML = `
+    <div class="callout">Student &amp; staff policy, straight from the Handbook and Policy Manual — not the tool's own SOPs (see the SOPs tab for that).</div>
+    <input type="text" id="policySearch" placeholder="Search policies…" style="width:100%; margin-bottom:10px;" value="${policySearchTerm}">
+    <div id="policyChips" style="margin-bottom:10px;">
+      ${Object.entries(POLICY_TOPICS).map(([key,label])=>
+        `<span class="grade-chip ${activePolicyTopics.has(key)?'active':''}" data-topic="${key}" style="cursor:pointer;">${label}</span>`
+      ).join('')}
+    </div>
+    <button class="btn secondary" id="staffToggleBtn" type="button" style="margin-bottom:14px;">${showStaffContent ? '👤 Hide staff-only procedures' : '👤 Show staff-only procedures'}</button>
+    <div id="policyList"></div>
+  `;
+  document.getElementById('policySearch').addEventListener('input', e=>{ policySearchTerm = e.target.value.toLowerCase(); renderPolicies(); });
+  el.querySelectorAll('[data-topic]').forEach(chip=>{
+    chip.addEventListener('click', ()=>{
+      const t = chip.dataset.topic;
+      if(activePolicyTopics.has(t)) activePolicyTopics.delete(t); else activePolicyTopics.add(t);
+      renderPolicies();
+    });
+  });
+  document.getElementById('staffToggleBtn').addEventListener('click', ()=>{
+    showStaffContent = !showStaffContent;
+    renderPolicies();
+  });
+
+  const filtered = POLICY_SECTIONS.filter(policyMatches);
+  const listEl = document.getElementById('policyList');
+  listEl.innerHTML = filtered.length ? filtered.map(s => `
+    <div class="card" data-policy-id="${s.id}" style="cursor:pointer;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <strong>${s.title}</strong>
+        ${s.staff ? '<span class="badge blocked" style="text-transform:uppercase;">STAFF</span>' : ''}
+        <span style="font-size:11px; color:var(--text-faint); margin-left:auto;">${POLICY_TOPICS[s.topic]}</span>
+      </div>
+      ${openPolicyId === s.id ? `<div style="margin-top:10px; font-size:14px; line-height:1.5;">${s.body}</div>` : ''}
+    </div>
+  `).join('') : '<div class="empty-state">No policy sections match those filters.</div>';
+  listEl.querySelectorAll('[data-policy-id]').forEach(card=>{
+    card.addEventListener('click', (e)=>{
+      const id = parseInt(card.dataset.policyId);
+      openPolicyId = (openPolicyId === id) ? null : id;
+      renderPolicies();
+    });
+  });
+}
+
+async function init(){
+  ALL_KITS = await getAllKits();
+  renderOrdersPage();
+  renderKitsPage();
+  renderIndexPage();
+}
+init();
+</script>
+</body>
+</html>
