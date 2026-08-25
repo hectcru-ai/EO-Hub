@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EO Hub — One-Time Kit Seeder</title>
+<style>
+  body{font-family:-apple-system,sans-serif; max-width:700px; margin:60px auto; padding:0 20px; color:#28271F;}
+  h1{font-size:22px;}
+  button{background:#C6862A; color:#fff; border:none; border-radius:6px; padding:12px 22px; font-size:15px; cursor:pointer;}
+  button:hover{background:#8A662C;}
+  button:disabled{opacity:0.5; cursor:not-allowed;}
+  #log{margin-top:24px; padding:16px; border-radius:6px; font-family:monospace; font-size:13px; white-space:pre-wrap; background:#f4f1ea; border:1px solid #ccc; max-height:400px; overflow-y:auto;}
+  .warn{background:#fff8e6; border:1px solid #C6862A; padding:14px; border-radius:6px; margin-bottom:20px;}
+</style>
+</head>
+<body>
+
+<h1>One-Time Kit Seeder</h1>
+<div class="warn">
+  ⚠ Run this <strong>once</strong>, not every time you open this file. It writes all 85 kits into Firestore's <code>kits</code> collection. Running it a second time will just overwrite them with the same data again — harmless, but pointless. Delete or stop using this file after it succeeds.
+</div>
+<p>This reads the same 85 kits already defined in the current tool and writes each one as a real document in Firestore.</p>
+
+<button id="seedBtn">Seed All 85 Kits</button>
+<div id="log">Click the button to begin.</div>
+
+<script type="module">
+  import { db } from "./firebase-data.js";
+  import { doc, setDoc } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+  import { KITS_TO_SEED } from "./kits_data.js";
+
+  const logEl = document.getElementById('log');
+  const btn = document.getElementById('seedBtn');
+
+  function log(msg){
+    logEl.textContent += msg + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    logEl.textContent = '';
+    log(`Starting — ${KITS_TO_SEED.length} kits to write...\n`);
+
+    let success = 0, failed = 0;
+    for(const kit of KITS_TO_SEED){
+      try{
+        await setDoc(doc(db, 'kits', String(kit.id)), kit);
+        success++;
+        log(`✅ [${kit.id}] ${kit.name}`);
+      }catch(err){
+        failed++;
+        log(`❌ [${kit.id}] ${kit.name} — ${err.message}`);
+      }
+    }
+
+    log(`\nDone. ${success} succeeded, ${failed} failed.`);
+    if(failed === 0){
+      log('\nAll kits seeded successfully. You can stop using this file now.');
+    } else {
+      log('\n⚠ Some kits failed — check the errors above before continuing.');
+    }
+    btn.disabled = false;
+  });
+</script>
+
+</body>
+</html>
