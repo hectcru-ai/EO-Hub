@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EO Hub — Patch: Zeiss CP.2, Aputure 600D, E-Image Matte Box</title>
+<style>
+  body{font-family:-apple-system,sans-serif; max-width:700px; margin:60px auto; padding:0 20px; color:#28271F;}
+  h1{font-size:22px;}
+  button{background:#C6862A; color:#fff; border:none; border-radius:6px; padding:12px 22px; font-size:15px; cursor:pointer;}
+  button:hover{background:#8A662C;}
+  button:disabled{opacity:0.5; cursor:not-allowed;}
+  input{padding:10px; border:1px solid #ccc; border-radius:6px; font-size:14px; width:100%; margin-bottom:10px; box-sizing:border-box;}
+  #log{margin-top:24px; padding:16px; border-radius:6px; font-family:monospace; font-size:13px; white-space:pre-wrap; background:#f4f1ea; border:1px solid #ccc; max-height:400px; overflow-y:auto;}
+  .warn{background:#fff8e6; border:1px solid #C6862A; padding:14px; border-radius:6px; margin-bottom:20px;}
+</style>
+</head>
+<body>
+
+<h1>Patch: Zeiss CP.2, Aputure 600D, E-Image Matte Box</h1>
+<div class="warn">
+  ⚠ Run this <strong>once</strong>. It corrects the lens list on Zeiss CP.2, fixes the Lightdome/Quick Release Clamp/Plastic Light Cover items on Aputure 600D, and creates the new E-Image Matte Box entry. Delete or stop using this file after it succeeds.
+</div>
+
+<div id="loginArea">
+  <input type="email" id="loginEmail" placeholder="Staff email">
+  <input type="password" id="loginPassword" placeholder="Password">
+  <button id="loginBtn">Log In</button>
+  <div id="loginStatus" style="margin-top:8px; font-size:13px;"></div>
+</div>
+
+<button id="patchBtn" disabled>Apply Patch (log in first)</button>
+<div id="log">Log in as staff, then click the button to begin.</div>
+
+<script type="module">
+  import { db, signInStaff } from "./firebase-data.js";
+  import { doc, updateDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js";
+
+  const logEl = document.getElementById('log');
+  const patchBtn = document.getElementById('patchBtn');
+  const loginBtn = document.getElementById('loginBtn');
+  const loginStatus = document.getElementById('loginStatus');
+
+  function log(msg){
+    logEl.textContent += msg + '\n';
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  loginBtn.addEventListener('click', async () => {
+    const email = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    try{
+      await signInStaff(email, password);
+      loginStatus.textContent = '✅ Logged in.';
+      patchBtn.disabled = false;
+      patchBtn.textContent = 'Apply Patch';
+    }catch(e){
+      loginStatus.textContent = '⚠ Login failed — check email/password.';
+    }
+  });
+
+  // Updates to EXISTING documents
+  const UPDATES = [
+    { id: 40, name: "Zeiss CP.2 Kit", fields: {
+      contents: ["15mm", "21mm", "25mm", "35mm", "50mm", "85mm", "135mm"]
+    }},
+    { id: 1, name: "Aputure 600D", fields: {
+      contents: ["Aputure 600D Lamp", "Hyper Reflector", "5-Pin XLR to 5-Pin XLR Cable", "Foam Inserts", "IEC Power Cables", "Power/Dimmer Control Box", "Quick Release Clamp", "Plastic Light Cover"],
+      perreq: ["F10 Barndoors", "F10 Fresnel Mount", "Lightdome"]
+    }},
+  ];
+
+  // A brand-new document that doesn't exist in Firestore yet
+  const NEW_KIT = {
+    id: 86, name: "E-Image Matte Box", category: "Support & Rig Kits", kittype: "pending_review",
+    contents: ["Contents not yet documented — pending details from staff"],
+    perreq: [],
+    notes: "NEW — flagged as missing from the directory during staff testing. Needs full contents list, grade tier, and testing steps before the pending-review flag can come off.",
+    test: ["Lay out and confirm every listed part/hardware piece is present.", "Test all moving joints, locks, and spreaders — move freely, then lock securely, no stripped knobs.", "Check weight-rated components against the kit's posted weight limit before signing off.", "Repack in original case/bag."],
+    review: "NEW — added because it was found missing from the directory during staff testing (slow rollout). Needs contents, grade tier, and testing steps from staff before this can be finalized.",
+    gradeTier: null, gradeText: "", gradeLinked: false, gradeApproval: false,
+  };
+
+  patchBtn.addEventListener('click', async () => {
+    patchBtn.disabled = true;
+    logEl.textContent = '';
+    log('Starting...\n');
+
+    let success = 0, failed = 0;
+    for(const u of UPDATES){
+      try{
+        await updateDoc(doc(db, 'kits', String(u.id)), u.fields);
+        success++;
+        log(`✅ Updated [${u.id}] ${u.name}`);
+      }catch(err){
+        failed++;
+        log(`❌ [${u.id}] ${u.name} — ${err.message}`);
+      }
+    }
+
+    try{
+      await setDoc(doc(db, 'kits', String(NEW_KIT.id)), NEW_KIT);
+      success++;
+      log(`✅ Created [${NEW_KIT.id}] ${NEW_KIT.name}`);
+    }catch(err){
+      failed++;
+      log(`❌ [${NEW_KIT.id}] ${NEW_KIT.name} — ${err.message}`);
+    }
+
+    log(`\nDone. ${success} succeeded, ${failed} failed.`);
+    if(failed === 0){
+      log('\nAll changes applied successfully. You can stop using this file now.');
+    } else {
+      log('\n⚠ Some updates failed — check the errors above.');
+    }
+    patchBtn.disabled = false;
+  });
+</script>
+
+</body>
+</html>
