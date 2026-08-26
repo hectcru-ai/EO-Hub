@@ -136,6 +136,14 @@
   .video-frame-wrap{position:relative; width:100%; padding-top:56.25%; border-radius:6px; overflow:hidden; border:1px solid var(--line);}
   .video-frame-wrap iframe{position:absolute; top:0; left:0; width:100%; height:100%; border:0;}
   .media-hint{font-size:11.5px; color:var(--text-faint); margin-top:6px;}
+  .room-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:16px; margin-top:16px;}
+  .room-card{background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; display:flex; flex-direction:column;}
+  .room-card img{width:100%; height:180px; object-fit:cover; display:block;}
+  .room-card .room-photo-missing{width:100%; height:180px; background:var(--bg); display:flex; align-items:center; justify-content:center; color:var(--text-faint); font-size:12.5px;}
+  .room-card .room-body{padding:12px 14px; display:flex; flex-direction:column; gap:8px; flex:1;}
+  .room-card .room-name{font-weight:700; font-size:14.5px;}
+  .room-reserve-btn{align-self:flex-start; margin-top:auto;}
+  .room-reserve-pending{font-size:12px; color:var(--text-faint); font-style:italic; margin-top:auto;}
   .kit-detail ul, .kit-detail ol{margin:0 0 4px; padding-left:20px;}
   .kit-detail li{margin-bottom:5px;}
   .kit-contents-list li{color:var(--text);}
@@ -188,7 +196,8 @@
   <button class="tab-btn" data-page="kits" type="button">Kit ID &amp; Testing</button>
   <button class="tab-btn" data-page="index" type="button">Equipment Index</button>
   <button class="tab-btn" data-page="sops" type="button">SOPs</button>
-  <button class="tab-btn" data-page="policy" type="button">Policies &amp; Procedures</button>
+  <button class="tab-btn" data-page="policy" type="button">Policies</button>
+  <button class="tab-btn" data-page="rooms" type="button">Room Reservations</button>
   <button class="tab-btn" data-page="documents" type="button">Documents</button>
   <button class="tab-btn" data-page="updatelog" type="button">Update Log</button>
 </div>
@@ -199,6 +208,7 @@
 <div id="page-updatelog" class="page" style="display:none;"></div>
 <div id="page-sops" class="page" style="display:none;"></div>
 <div id="page-policy" class="page" style="display:none;"></div>
+<div id="page-rooms" class="page" style="display:none;"></div>
 <div id="page-documents" class="page" style="display:none;"></div>
 
 <footer class="page-footer">
@@ -221,6 +231,7 @@ import { SOP_SECTIONS } from "./sops_data.js";
 import { POLICY_SECTIONS, POLICY_TOPICS } from "./policies_data.js";
 import { EMBEDDED_DOCS } from "./documents_data.js";
 import { ITEMS, TIER_LABELS, CATEGORIES } from "./items_data.js";
+import { ROOMS, ROOM_RESERVATION_RULES } from "./rooms_data.js";
 
 const STUDENT_TIER_LABELS = {freshman:"Freshman", sophomore:"Sophomore", junior:"Junior", senior:"Senior+"};
 const STUDENT_TIER_RANK = {freshman:1, sophomore:2, junior:3, senior:4};
@@ -236,9 +247,10 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    ['orders','kits','index','updatelog','sops','policy','documents'].forEach(p=>{
+    ['orders','kits','index','updatelog','sops','policy','documents','rooms'].forEach(p=>{
       document.getElementById('page-'+p).style.display = (p===btn.dataset.page) ? '' : 'none';
     });
+    if(btn.dataset.page === 'rooms') renderRoomsPage();
     if(btn.dataset.page === 'updatelog') renderUpdateLog();
     if(btn.dataset.page === 'sops'){ renderSOPs(); loadTraineeList(); }
     if(btn.dataset.page === 'policy') renderPolicies();
@@ -273,10 +285,6 @@ function mediaStatusBadge(kitId){
 function renderKitsPage(){
   const el = document.getElementById('page-kits');
   const kitCategories = [...new Set(ALL_KITS.map(k=>k.category))];
-  const filtered = ALL_KITS.filter(k => {
-    if(kitActiveCategories.size && !kitActiveCategories.has(k.category)) return false;
-    return !kitSearchTerm || k.name.toLowerCase().includes(kitSearchTerm);
-  });
   el.innerHTML = `
     <div class="callout">Kit reference, testing steps, condition log, and photo/video documentation status — live-synced across every device automatically.</div>
     <input type="text" id="kitSearch" placeholder="Search kits…" style="width:100%; margin-bottom:12px;" value="${kitSearchTerm}">
@@ -292,7 +300,7 @@ function renderKitsPage(){
     </div>
     <div id="kitsList"></div>
   `;
-  document.getElementById('kitSearch').addEventListener('input', e=>{ kitSearchTerm = e.target.value.toLowerCase(); renderKitsPage(); });
+  document.getElementById('kitSearch').addEventListener('input', e=>{ kitSearchTerm = e.target.value.toLowerCase(); drawKitsList(); });
   el.querySelectorAll('[data-cat]').forEach(chip=>{
     chip.addEventListener('click', ()=>{
       const c = chip.dataset.cat;
@@ -303,61 +311,70 @@ function renderKitsPage(){
   el.querySelectorAll('[data-tier]').forEach(chip=>{
     chip.addEventListener('click', ()=>{ studentGrade = chip.dataset.tier || null; renderKitsPage(); });
   });
+  drawKitsList();
+}
+
+function kitCardHTML(k){
+  const elig = eligibility(k);
+  const expanded = openKitId === k.id;
+
+  let eligNote = '';
+  if(elig.status === 'blocked'){
+    eligNote = `<div class="eligibility-note">🔒 <strong>Not allowed for this student:</strong> ${k.gradeText || ''}</div>`;
+  } else if(elig.status === 'approval'){
+    eligNote = `<div class="eligibility-note approval">⚠ <strong>Special clearance required:</strong> ${k.gradeText || ''}</div>`;
+  } else if(elig.status === 'linked'){
+    eligNote = `<div class="eligibility-note linked">↳ <strong>No independent grade gate:</strong> ${k.gradeText || ''}</div>`;
+  } else if(k.gradeTier && k.gradeText){
+    eligNote = `<div class="eligibility-note ok">✓ <strong>Grade policy:</strong> ${k.gradeText}</div>`;
+  }
+
+  return `
+    <div class="kit-card" data-kit-id="${k.id}">
+      <div data-expand-kit="${k.id}" style="cursor:pointer;">
+        <span class="kit-name">${k.name}</span>
+        ${k.kittype==='retired' ? '<span class="badge blocked">RETIRED</span>' : ''}
+        ${k.review ? '<span class="review-badge">REVIEW</span>' : ''}
+        ${elig.label ? `<span class="badge ${elig.status}">${elig.label}</span>` : ''}
+        <span id="mediabadge-${k.id}">${mediaStatusBadge(k.id)}</span>
+        <span style="font-size:11px; color:var(--text-faint); margin-left:6px;">${(k.contents||[]).length} items ${expanded ? '▲' : '▼'}</span>
+      </div>
+      ${expanded ? `
+      <div class="kit-detail" style="margin-top:10px;">
+        <h4>Standard Contents</h4>
+        <ol class="kit-contents-list">${(k.contents||[]).map(c=>`<li>${c}</li>`).join('')}</ol>
+        ${k.perreq && k.perreq.length ? `<h4>Per Request / Limited Availability</h4><ol class="kit-perreq-list">${k.perreq.map(c=>`<li>${c}</li>`).join('')}</ol>` : ''}
+        ${k.notes ? `<div class="note-callout">📝 ${k.notes}</div>` : ''}
+        ${eligNote}
+        ${k.review ? `<div class="review-note">⚠ <strong>Flagged for Ivy's review:</strong> ${k.review}</div>` : ''}
+        ${k.test && k.test.length ? `<h4>Testing / Setup Procedure</h4><ol>${k.test.map(c=>`<li>${c}</li>`).join('')}</ol>` : ''}
+      </div>
+      ` : ''}
+      <div class="kit-condition-area" id="cond-${k.id}" style="margin-top:8px; font-size:12.5px;"></div>
+      <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
+        <button class="btn secondary" data-report-kit="${k.id}" type="button" style="font-size:12px; padding:5px 10px;">+ Report an issue</button>
+        <button class="btn secondary" data-toggle-media="${k.id}" type="button" style="font-size:12px; padding:5px 10px;">📷🎬 Manage Photo/Video</button>
+      </div>
+      <div class="media-section" id="media-${k.id}" data-kit-id="${k.id}" style="display:none; margin-top:12px;">
+        <div class="media-tabs">
+          <button class="media-tab-btn active" data-mediatab="photo" type="button">📷 Photo</button>
+          <button class="media-tab-btn" data-mediatab="video" type="button">🎬 Video</button>
+        </div>
+        <div class="media-pane active" data-pane="photo"><div style="color:var(--text-faint); font-size:13px;">Loading…</div></div>
+        <div class="media-pane" data-pane="video"><div style="color:var(--text-faint); font-size:13px;">Loading…</div></div>
+      </div>
+    </div>
+  `;
+}
+
+function drawKitsList(){
+  const kitCategories = [...new Set(ALL_KITS.map(k=>k.category))];
+  const filtered = ALL_KITS.filter(k => {
+    if(kitActiveCategories.size && !kitActiveCategories.has(k.category)) return false;
+    return !kitSearchTerm || k.name.toLowerCase().includes(kitSearchTerm);
+  });
   const listEl = document.getElementById('kitsList');
   if(!filtered.length){ listEl.innerHTML = '<div class="empty-state">No kits match.</div>'; return; }
-
-  function kitCardHTML(k){
-    const elig = eligibility(k);
-    const expanded = openKitId === k.id;
-
-    let eligNote = '';
-    if(elig.status === 'blocked'){
-      eligNote = `<div class="eligibility-note">🔒 <strong>Not allowed for this student:</strong> ${k.gradeText || ''}</div>`;
-    } else if(elig.status === 'approval'){
-      eligNote = `<div class="eligibility-note approval">⚠ <strong>Special clearance required:</strong> ${k.gradeText || ''}</div>`;
-    } else if(elig.status === 'linked'){
-      eligNote = `<div class="eligibility-note linked">↳ <strong>No independent grade gate:</strong> ${k.gradeText || ''}</div>`;
-    } else if(k.gradeTier && k.gradeText){
-      eligNote = `<div class="eligibility-note ok">✓ <strong>Grade policy:</strong> ${k.gradeText}</div>`;
-    }
-
-    return `
-      <div class="kit-card" data-kit-id="${k.id}">
-        <div data-expand-kit="${k.id}" style="cursor:pointer;">
-          <span class="kit-name">${k.name}</span>
-          ${k.kittype==='retired' ? '<span class="badge blocked">RETIRED</span>' : ''}
-          ${k.review ? '<span class="review-badge">REVIEW</span>' : ''}
-          ${elig.label ? `<span class="badge ${elig.status}">${elig.label}</span>` : ''}
-          <span id="mediabadge-${k.id}">${mediaStatusBadge(k.id)}</span>
-          <span style="font-size:11px; color:var(--text-faint); margin-left:6px;">${(k.contents||[]).length} items ${expanded ? '▲' : '▼'}</span>
-        </div>
-        ${expanded ? `
-        <div class="kit-detail" style="margin-top:10px;">
-          <h4>Standard Contents</h4>
-          <ol class="kit-contents-list">${(k.contents||[]).map(c=>`<li>${c}</li>`).join('')}</ol>
-          ${k.perreq && k.perreq.length ? `<h4>Per Request / Limited Availability</h4><ol class="kit-perreq-list">${k.perreq.map(c=>`<li>${c}</li>`).join('')}</ol>` : ''}
-          ${k.notes ? `<div class="note-callout">📝 ${k.notes}</div>` : ''}
-          ${eligNote}
-          ${k.review ? `<div class="review-note">⚠ <strong>Flagged for Ivy's review:</strong> ${k.review}</div>` : ''}
-          ${k.test && k.test.length ? `<h4>Testing / Setup Procedure</h4><ol>${k.test.map(c=>`<li>${c}</li>`).join('')}</ol>` : ''}
-        </div>
-        ` : ''}
-        <div class="kit-condition-area" id="cond-${k.id}" style="margin-top:8px; font-size:12.5px;"></div>
-        <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
-          <button class="btn secondary" data-report-kit="${k.id}" type="button" style="font-size:12px; padding:5px 10px;">+ Report an issue</button>
-          <button class="btn secondary" data-toggle-media="${k.id}" type="button" style="font-size:12px; padding:5px 10px;">📷🎬 Manage Photo/Video</button>
-        </div>
-        <div class="media-section" id="media-${k.id}" data-kit-id="${k.id}" style="display:none; margin-top:12px;">
-          <div class="media-tabs">
-            <button class="media-tab-btn active" data-mediatab="photo" type="button">📷 Photo</button>
-            <button class="media-tab-btn" data-mediatab="video" type="button">🎬 Video</button>
-          </div>
-          <div class="media-pane active" data-pane="photo"><div style="color:var(--text-faint); font-size:13px;">Loading…</div></div>
-          <div class="media-pane" data-pane="video"><div style="color:var(--text-faint); font-size:13px;">Loading…</div></div>
-        </div>
-      </div>
-    `;
-  }
 
   let html = '';
   kitCategories.forEach(cat=>{
@@ -372,7 +389,7 @@ function renderKitsPage(){
     head.addEventListener('click', ()=>{
       const id = head.dataset.expandKit;
       openKitId = (String(openKitId) === String(id)) ? null : id;
-      renderKitsPage();
+      drawKitsList();
     });
   });
   listEl.querySelectorAll('[data-report-kit]').forEach(btn=>{
@@ -702,6 +719,26 @@ function renderIndexPage(){
       <strong>³</strong> Senior Capstone, Grad Thesis, and Endowed projects have priority over Juniors; Junior 300/400-level class projects have priority over Senior/Grad personal projects.<br>
       <strong>⁴</strong> BA-20s / BA-30s charge via micro-USB cable (included in the Sennheiser lav kit).<br>
       <strong>⁵</strong> If disassembled, must be reassembled exactly as before at checkout — take pictures first.
+    </div>
+    <div class="card" style="margin-top:18px;">
+      <h4 style="margin-top:0;">General Guidelines</h4>
+      <ul style="font-size:13px; line-height:1.6; margin:0; padding-left:20px;">
+        <li>All battery and media amounts above are <strong>per item</strong> unless labeled otherwise.</li>
+        <li>Bring your own standard batteries (AA, AAA, 9V, etc.) — the EO only provides these for testing equipment at checkout, not for actual use.</li>
+        <li>V-mount and G-mount (Gold Mount — same thing) batteries need one charger per pair: Charger #1 with Batteries #1–2, Charger #2 with Batteries #3–4, and so on. Max two V-mount/G-mount batteries per light.</li>
+        <li>Due to limited inventory, students can check out a <strong>maximum of two cameras and three Aputure lights per project</strong>, unless EO Management and the applicable professor make a specific exception.</li>
+        <li>If reserving without a compatible EO camera on the order (i.e., for your own personal camera), the <strong>only</strong> tripods and lenses available are the Rokinon and Zeiss SLR Prime lenses, and the FSB-4 or Libec tripods. Everything else is reserved for use with EO cameras only, absent a specific exception from EO Management and the applicable professor.</li>
+      </ul>
+    </div>
+    <div class="card" style="margin-top:14px;">
+      <h4 style="margin-top:0;">Tripod Weight Limits (do not exceed)</h4>
+      <ul style="font-size:13px; line-height:1.6; margin:0; padding-left:20px;">
+        <li><strong>Sachtler FSB 4</strong> (C100, a7S II, personal equipment): 8.8 lbs.</li>
+        <li><strong>MagnusRex VT-5000</strong> (C300 only): 17 lbs.</li>
+        <li><strong>Sachtler V18</strong> (FS7, RED, FX6): 44 lbs.</li>
+        <li><strong>Sachtler V20</strong> (FS7, Ursa, RED, FX6): 55 lbs.</li>
+        <li><strong>Libec</strong> (DSLR cameras only — Canon T3i, T5; Nikon D3000, D40, D5100, D7000): N/A</li>
+      </ul>
     </div>
   `;
   const listEl = document.getElementById('indexList');
@@ -1224,9 +1261,11 @@ async function renderUpdateLog(){
 let sopSearchTerm = '';
 let sopActiveTopics = new Set();
 let openSopId = null;
-const SOP_TOPIC_LABELS = {maintenance: 'Hub Maintenance'};
+let sopShowStaffContent = false;
+const SOP_TOPIC_LABELS = {maintenance: 'Hub Maintenance', studentproc: 'Student Procedures', staffproc: 'Staff Procedures', reference: 'Reference'};
 
 function sopMatches(section){
+  if(!sopShowStaffContent && section.staff) return false;
   if(sopActiveTopics.size && !sopActiveTopics.has(section.topic)) return false;
   if(sopSearchTerm){
     const hay = (section.title + ' ' + section.body).toLowerCase();
@@ -1238,7 +1277,7 @@ function sopMatches(section){
 function renderSOPs(){
   const el = document.getElementById('page-sops');
   el.innerHTML = `
-    <div class="callout">Reference for how the Hub itself works — device setup, updates, and the underlying order process. For day-to-day student/staff policy, see Policies &amp; Procedures instead.</div>
+    <div class="callout">How things actually work — student and staff procedures, plus how the Hub tool itself operates. For "am I allowed to do this" policy questions, see the Policies tab instead.</div>
     <div class="card" style="border-left:3px solid var(--amber);">
       <strong>📦 Backup / Restore</strong>
       <div style="font-size:12.5px; color:var(--text-muted); margin:6px 0 10px;">Staff only. See the "Weekly Backup" entry below for what this actually does and when to use it.</div>
@@ -1248,11 +1287,12 @@ function renderSOPs(){
       <div id="backupStatusMsg" style="margin-top:8px; font-size:13px;"></div>
     </div>
     <input type="text" id="sopSearch" placeholder="Search SOPs…" style="width:100%; margin-bottom:10px;" value="${sopSearchTerm}">
-    <div style="margin-bottom:14px;">
+    <div style="margin-bottom:10px;">
       ${Object.entries(SOP_TOPIC_LABELS).map(([key,label])=>
         `<span class="grade-chip ${sopActiveTopics.has(key)?'active':''}" data-sop-topic="${key}" style="cursor:pointer;">${label}</span>`
       ).join('')}
     </div>
+    <button class="btn secondary" id="sopStaffToggleBtn" type="button" style="margin-bottom:14px;">${sopShowStaffContent ? '👤 Hide staff-only procedures' : '👤 Show staff-only procedures'}</button>
     <div id="sopList"></div>
     <div style="max-width:1180px; margin:24px auto 0;">
       <h2 style="font-size:16px; margin-bottom:12px;">Trainee Progress Tracker</h2>
@@ -1267,7 +1307,7 @@ function renderSOPs(){
     </div>
   `;
   renderTraineeSelect();
-  document.getElementById('sopSearch').addEventListener('input', e=>{ sopSearchTerm = e.target.value.toLowerCase(); renderSOPs(); });
+  document.getElementById('sopSearch').addEventListener('input', e=>{ sopSearchTerm = e.target.value.toLowerCase(); drawSopsList(); });
   el.querySelectorAll('[data-sop-topic]').forEach(chip=>{
     chip.addEventListener('click', ()=>{
       const t = chip.dataset.sopTopic;
@@ -1275,24 +1315,11 @@ function renderSOPs(){
       renderSOPs();
     });
   });
-  const filtered = SOP_SECTIONS.filter(sopMatches);
-  const listEl = document.getElementById('sopList');
-  listEl.innerHTML = filtered.length ? filtered.map(s => `
-    <div class="card" data-sop-id="${s.id}" style="cursor:pointer;">
-      <div style="display:flex; align-items:center; gap:8px;">
-        <strong>${s.title}</strong>
-        <span style="font-size:11px; color:var(--text-faint); margin-left:auto;">${SOP_TOPIC_LABELS[s.topic]} · Updated ${s.updated}</span>
-      </div>
-      ${openSopId === s.id ? `<div style="margin-top:10px; font-size:14px; line-height:1.5;">${s.body}</div>` : ''}
-    </div>
-  `).join('') : '<div class="empty-state">No SOPs match those filters.</div>';
-  listEl.querySelectorAll('[data-sop-id]').forEach(card=>{
-    card.addEventListener('click', ()=>{
-      const id = parseInt(card.dataset.sopId);
-      openSopId = (openSopId === id) ? null : id;
-      renderSOPs();
-    });
+  document.getElementById('sopStaffToggleBtn').addEventListener('click', ()=>{
+    sopShowStaffContent = !sopShowStaffContent;
+    renderSOPs();
   });
+  drawSopsList();
 
   document.getElementById('downloadBackupBtn').addEventListener('click', async ()=>{
     if(!requireStaffAuth('download a full backup')) return;
@@ -1345,6 +1372,28 @@ function renderSOPs(){
   });
 }
 
+function drawSopsList(){
+  const filtered = SOP_SECTIONS.filter(sopMatches);
+  const listEl = document.getElementById('sopList');
+  listEl.innerHTML = filtered.length ? filtered.map(s => `
+    <div class="card" data-sop-id="${s.id}" style="cursor:pointer;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <strong>${s.title}</strong>
+        ${s.staff ? '<span class="badge blocked" style="text-transform:uppercase;">STAFF</span>' : ''}
+        <span style="font-size:11px; color:var(--text-faint); margin-left:auto;">${SOP_TOPIC_LABELS[s.topic]} · Updated ${s.updated}</span>
+      </div>
+      ${openSopId === s.id ? `<div style="margin-top:10px; font-size:14px; line-height:1.5;">${s.body}</div>` : ''}
+    </div>
+  `).join('') : '<div class="empty-state">No SOPs match those filters.</div>';
+  listEl.querySelectorAll('[data-sop-id]').forEach(card=>{
+    card.addEventListener('click', ()=>{
+      const id = parseInt(card.dataset.sopId);
+      openSopId = (openSopId === id) ? null : id;
+      drawSopsList();
+    });
+  });
+}
+
 // ---------------- Policies & Procedures page ----------------
 let policySearchTerm = '';
 let activePolicyTopics = new Set();
@@ -1364,17 +1413,16 @@ function policyMatches(section){
 function renderPolicies(){
   const el = document.getElementById('page-policy');
   el.innerHTML = `
-    <div class="callout">Student &amp; staff policy, straight from the Handbook and Policy Manual — not the tool's own SOPs (see the SOPs tab for that).</div>
+    <div class="callout">Answers "am I allowed to do this" — eligibility, fees, conduct, and general FAQ. For step-by-step how-to's (making a reservation, checkout, staff processes), see the SOPs tab instead.</div>
     <input type="text" id="policySearch" placeholder="Search policies…" style="width:100%; margin-bottom:10px;" value="${policySearchTerm}">
     <div id="policyChips" style="margin-bottom:10px;">
       ${Object.entries(POLICY_TOPICS).map(([key,label])=>
         `<span class="grade-chip ${activePolicyTopics.has(key)?'active':''}" data-topic="${key}" style="cursor:pointer;">${label}</span>`
       ).join('')}
     </div>
-    <button class="btn secondary" id="staffToggleBtn" type="button" style="margin-bottom:14px;">${showStaffContent ? '👤 Hide staff-only procedures' : '👤 Show staff-only procedures'}</button>
     <div id="policyList"></div>
   `;
-  document.getElementById('policySearch').addEventListener('input', e=>{ policySearchTerm = e.target.value.toLowerCase(); renderPolicies(); });
+  document.getElementById('policySearch').addEventListener('input', e=>{ policySearchTerm = e.target.value.toLowerCase(); drawPoliciesList(); });
   el.querySelectorAll('[data-topic]').forEach(chip=>{
     chip.addEventListener('click', ()=>{
       const t = chip.dataset.topic;
@@ -1382,11 +1430,10 @@ function renderPolicies(){
       renderPolicies();
     });
   });
-  document.getElementById('staffToggleBtn').addEventListener('click', ()=>{
-    showStaffContent = !showStaffContent;
-    renderPolicies();
-  });
+  drawPoliciesList();
+}
 
+function drawPoliciesList(){
   const filtered = POLICY_SECTIONS.filter(policyMatches);
   const listEl = document.getElementById('policyList');
   listEl.innerHTML = filtered.length ? filtered.map(s => `
@@ -1403,7 +1450,7 @@ function renderPolicies(){
     card.addEventListener('click', (e)=>{
       const id = parseInt(card.dataset.policyId);
       openPolicyId = (openPolicyId === id) ? null : id;
-      renderPolicies();
+      drawPoliciesList();
     });
   });
 }
@@ -1693,6 +1740,26 @@ function renderTraineeTracker(){
       });
     });
   }
+}
+
+// ---------------- Room Reservations ----------------
+function renderRoomsPage(){
+  const el = document.getElementById('page-rooms');
+  el.innerHTML = `
+    <div class="callout">Reserve a room remotely from any device — no need to walk up to the QR code on the door.</div>
+    <div class="card">${ROOM_RESERVATION_RULES}</div>
+    <div class="room-grid">
+      ${ROOMS.map(r => `
+        <div class="room-card">
+          ${r.photoDataUrl ? `<img src="${r.photoDataUrl}" alt="${r.name}">` : `<div class="room-photo-missing">No photo yet</div>`}
+          <div class="room-body">
+            <div class="room-name">${r.name}</div>
+            ${r.reserveUrl ? `<a class="btn room-reserve-btn" href="${r.reserveUrl}" target="_blank" rel="noopener">Reserve This Room</a>` : `<div class="room-reserve-pending">Reservation link coming soon</div>`}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
 }
 
 async function init(){
