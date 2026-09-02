@@ -271,6 +271,7 @@
 import {
   getAllKits, getKit, getOrder, saveOrder, listOrders, setOrderArchived,
   addConditionLogEntry, getConditionLogForKit, resolveConditionLogEntry,
+  getAllOpenConditionLogs,
   addUpdateLogItem, getUpdateLogItems, toggleUpdateLogItem, deleteUpdateLogItem,
   setLastReviewedDate, getLastReviewedDate, watchCollection,
   getMediaIndex, setKitMediaStatus,
@@ -281,6 +282,7 @@ import {
   getLaunchChecklistState, setLaunchChecklistItem,
   getSopVideoLinks, setSopVideoLink, removeSopVideoLink,
   getTrainingVideos, addTrainingVideo, removeTrainingVideo,
+  updateKitData, applyIvyBatch4Updates,
   getCheqroomVideoLinks, setCheqroomVideoLink, removeCheqroomVideoLink,
   getKitPhotos, addKitPhoto, removeKitPhotoAt, setPhotoCaption, setPhotoHotspots,
   saveKitVideoLink, removeKitVideo,
@@ -340,6 +342,7 @@ function eligibility(kit, gradeOverride){
 
 // ---------------- Kit ID page ----------------
 let kitMediaIndex = {};
+let openConditionLogs = []; // all unresolved condition log entries, keyed for fast lookup
 
 function mediaStatusBadge(kitId){
   const media = kitMediaIndex[kitId] || {photo:false, video:false};
@@ -966,6 +969,7 @@ let newOrderInstanceCounter = 0;
 let newOrderUnitIds = {}; // keyed by instanceId, not kitId
 let newOrderStudentGrade = '';
 let newOrderOverride = {ack: false, reason: ''};
+let conditionLogAck = false; // must be true before save if any kit has open condition log entries
 let newOrderResNum = '';
 let newOrderStudentName = '';
 let newOrderCheckoutDate = new Date().toISOString().slice(0,10);
@@ -1019,6 +1023,12 @@ function renderHubMaintenanceSection(){
         <input type="file" id="restoreBackupInput" accept="application/json" style="display:none;">
         <button class="btn secondary" id="restoreBackupBtn" type="button">♻️ Restore From Backup</button>
         <div id="backupStatusMsg" style="margin-top:8px; font-size:13px;"></div>
+      </div>
+      <div class="card" style="border-left:3px solid var(--amber); margin-top:14px;">
+        <strong>🗂 Apply Ivy's Grade Tier Updates (Batch 4 — Sept 2 2026)</strong>
+        <div style="font-size:12.5px; color:var(--text-muted); margin:6px 0 10px;">Applies all 42 kit updates from Ivy's Sept 2 review: grade tiers, retirements, unavailable flags, and the VariZoom rename. One-time operation — safe to run once. Does not touch orders, condition logs, or any other data.</div>
+        <button class="btn secondary" id="applyBatch4Btn" type="button">▶ Apply Grade Tier Updates</button>
+        <div id="batch4StatusMsg" style="margin-top:8px; font-size:13px;"></div>
       </div>
       <div id="hubMaintenanceList" style="margin-top:14px;"></div>
     </div>
@@ -1094,6 +1104,31 @@ function wireHubMaintenanceHandlers(){
     e.target.value = '';
   });
   drawHubMaintenanceList();
+
+  const batch4Btn = document.getElementById('applyBatch4Btn');
+  if(batch4Btn){
+    batch4Btn.addEventListener('click', async ()=>{
+      if(!requireStaffAuth('apply grade tier updates')) return;
+      if(!confirm('Apply all 42 kit updates from Ivy\'s Sept 2 review? This will update grade tiers, retire kits, and rename VariZoom. It does not affect orders or other data. This is safe to run once.')) return;
+      const msg = document.getElementById('batch4StatusMsg');
+      batch4Btn.disabled = true;
+      msg.style.color = 'var(--text-muted)';
+      msg.textContent = 'Applying updates…';
+      try{
+        const count = await applyIvyBatch4Updates((done, total)=>{
+          msg.textContent = `Updating… ${done} of ${total}`;
+        });
+        msg.style.color = 'var(--success)';
+        msg.textContent = `✅ Done — ${count} kits updated. Reload Kit ID to see changes. You can hide this button now.`;
+        batch4Btn.textContent = '✅ Already Applied';
+        ALL_KITS = await getAllKits();
+      }catch(e){
+        msg.style.color = 'var(--danger)';
+        msg.textContent = '⚠ Error: ' + e.message;
+        batch4Btn.disabled = false;
+      }
+    });
+  }
 }
 
 function renderOrdersPage(){
@@ -1166,7 +1201,11 @@ function renderNewOrderPane(){
         const sameKitCount = newOrderKits.filter(x=>String(x.kitId)===String(inst.kitId)).length;
         const posAmongSame = newOrderKits.slice(0, idx+1).filter(x=>String(x.kitId)===String(inst.kitId)).length;
         const dupLabel = sameKitCount > 1 ? ` (${posAmongSame} of ${sameKitCount})` : '';
-        return k ? `<span class="selected-kit-chip">${k.name}${dupLabel}
+        const kitIssues = openConditionLogs.filter(e => String(e.kitId) === String(inst.kitId));
+        const issueWarning = kitIssues.length
+          ? `<span style="color:var(--danger); font-size:11px; font-weight:600; margin-left:6px;">⚠ ${kitIssues.length} open issue${kitIssues.length>1?'s':''}: ${kitIssues.map(e=>e.item||e.note||'issue').join(', ')}</span>`
+          : '';
+        return k ? `<span class="selected-kit-chip">${k.name}${dupLabel}${issueWarning}
           <input type="text" class="order-unit-input" data-unitkit="${inst.instanceId}" placeholder="Unit #" value="${unitVal}" style="width:70px; margin-left:8px; font-size:12px;">
           <button data-remove="${inst.instanceId}" type="button">✕</button></span>` : '';
       }).join('')}</div>
@@ -1205,6 +1244,7 @@ function renderNewOrderPane(){
     btn.addEventListener('click', ()=>{ newOrderKits = newOrderKits.filter(inst=>inst.instanceId!==btn.dataset.remove); renderNewOrderPane(); });
   });
   document.getElementById('buildChecklistBtn').addEventListener('click', ()=>{
+    conditionLogAck = false;
     newOrderChecklist = {};
     newOrderKits.forEach(inst=>{
       const k = ALL_KITS.find(x=>String(x.id)===String(inst.kitId));
@@ -1219,7 +1259,38 @@ function renderNewOrderPane(){
 function renderChecklistArea(){
   const area = document.getElementById('checklistArea');
   if(!newOrderKits.length){ area.innerHTML = ''; return; }
-  let html = `<div class="card" style="margin-top:12px;"><h4 style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin:0 0 14px;">Combined Checkout Checklist</h4>`;
+
+  // ── Condition log gate ──────────────────────────────────────────────────
+  const openIssues = newOrderKits.flatMap(inst => {
+    const k = ALL_KITS.find(x=>String(x.id)===String(inst.kitId));
+    const kitName = k?.name || 'Unknown kit';
+    return openConditionLogs
+      .filter(e => String(e.kitId) === String(inst.kitId))
+      .map(e => ({ kitName, item: e.item || '', note: e.note || '', type: e.type || '' }));
+  });
+
+  let gateHtml = '';
+  if(openIssues.length){
+    gateHtml = `
+      <div class="card" style="border-left:4px solid var(--danger); margin-bottom:14px; background:#fff8f8;">
+        <div style="font-weight:700; color:var(--danger); font-size:13px; margin-bottom:8px;">
+          ⚠ ${openIssues.length} open condition log ${openIssues.length===1?'issue':'issues'} on this order
+        </div>
+        <div style="font-size:12.5px; color:var(--text-muted); margin-bottom:10px;">
+          These issues were logged at a previous check-in. Review each one before proceeding.
+        </div>
+        <ul style="margin:0 0 12px 0; padding-left:20px; font-size:13px;">
+          ${openIssues.map(i=>`<li><strong>${i.kitName}</strong>${i.item?' — '+i.item:''}${i.note?' : '+i.note:''}</li>`).join('')}
+        </ul>
+        <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:13px;">
+          <input type="checkbox" id="conditionLogAckCheck" ${conditionLogAck?'checked':''} style="margin-top:2px; flex-shrink:0;">
+          <span><strong>Staff acknowledgement:</strong> I have reviewed all open issues above and am proceeding with this checkout with full knowledge of the current condition of this gear.</span>
+        </label>
+      </div>`;
+  }
+  // ────────────────────────────────────────────────────────────────────────
+
+  let html = `<div class="card" style="margin-top:12px;">${gateHtml}<h4 style="font-size:12px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin:0 0 14px;">Combined Checkout Checklist</h4>`;
   // Sorted alphabetically by kit name for easier scanning — a stable sort
   // keeps duplicate units of the same kit in the order they were actually
   // added, so "Unit 1 of 2" / "Unit 2 of 2" still lines up correctly.
@@ -1277,6 +1348,9 @@ function renderChecklistArea(){
   });
   document.getElementById('studentSigInput').addEventListener('input', e=>{ newOrderStudentSig = e.target.value; });
   document.getElementById('staffSigInput').addEventListener('input', e=>{ newOrderStaffSig = e.target.value; });
+  const ackEl = document.getElementById('conditionLogAckCheck');
+  if(ackEl) ackEl.addEventListener('change', e=>{ conditionLogAck = e.target.checked; });
+
   document.getElementById('saveOrderBtn').addEventListener('click', saveNewOrder);
   document.getElementById('saveDraftBtn').addEventListener('click', saveDraftOrder);
   document.getElementById('printOrderBtn').addEventListener('click', ()=>printOrderSummary(buildOrderObjectDraft()));
@@ -1315,6 +1389,14 @@ function getGradeMismatches(){
 async function saveNewOrder(){
   const statusEl = document.getElementById('saveStatusMsg');
   if(!requireStaffAuth('save a checkout record')) return;
+  // Check condition log gate
+  const openIssuesForOrder = newOrderKits.some(inst =>
+    openConditionLogs.some(e => String(e.kitId) === String(inst.kitId))
+  );
+  if(openIssuesForOrder && !conditionLogAck){
+    statusEl.textContent = '⚠ This order has open condition log issues that must be reviewed and acknowledged before saving. Check the box at the top of the checklist.';
+    statusEl.style.color = 'var(--danger)'; return;
+  }
   const mismatches = getGradeMismatches();
   if(mismatches.length && !newOrderOverride.ack){
     statusEl.textContent = '⚠ This order has a grade-eligibility conflict that hasn\'t been acknowledged. Check the override box above, or remove the flagged kit(s), before saving.';
@@ -1338,6 +1420,18 @@ async function saveNewOrder(){
     await saveOrder(order);
     statusEl.textContent = `✅ Saved. Staff can look this up at check-in using reservation #${order.reservationNumber}.`;
     statusEl.style.color = 'var(--success)';
+    // Reset all state so the form is clean for the next checkout
+    newOrderKits = [];
+    newOrderInstanceCounter = 0;
+    newOrderStudentGrade = '';
+    newOrderOverride = {ack:false, reason:''};
+    newOrderResNum = '';
+    newOrderStudentName = '';
+    newOrderStudentSig = '';
+    newOrderStaffSig = '';
+    newOrderChecklist = {};
+    conditionLogAck = false;
+    setTimeout(()=>{ renderNewOrderPane(); }, 1800); // brief pause so staff can read the confirmation
   }catch(err){
     statusEl.textContent = '⚠ Could not save — ' + err.message + '. Try printing as a backup.';
     statusEl.style.color = 'var(--danger)';
@@ -3119,6 +3213,12 @@ async function init(){
   }catch(e){
     kitMediaIndex = {};
     console.warn('Could not load kit media status (check Firestore rules for the kitMedia collection):', e.message);
+  }
+  try{
+    openConditionLogs = await getAllOpenConditionLogs();
+  }catch(e){
+    openConditionLogs = [];
+    console.warn('Could not load open condition logs:', e.message);
   }
   renderOrdersPage();
   renderKitsPage();
